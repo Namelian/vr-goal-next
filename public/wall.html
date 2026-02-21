@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>VR Goal</title>
+<style>
+  body{margin:0;background:#111;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#fff}
+  .wrap{max-width:900px;margin:auto;padding:12px}
+  canvas{width:100%;border-radius:20px;background:#111;display:block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="c" width="1179" height="2556"></canvas>
+</div>
+
+<script>
+/* ===== 설정 ===== */
+const START = "2021-12-05";
+const GOAL  = "2031-12-05";
+
+/* ===== 캔버스 ===== */
+const W = 1179, H = 2556;
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+/* ===== 레이아웃 ===== */
+const SAFE_TOP = Math.round(H*0.16);
+const SAFE_BOT = Math.round(H*0.18);
+const COL_W = Math.round(W*0.74);
+const COL_X = Math.round((W - COL_W)/2);
+const SHIFT_Y = 170;
+
+/* ===== 스타일 ===== */
+const BG = "#111";
+const LINE_PAST = "rgba(255,255,255,0.92)";
+const LINE_FUT  = "rgba(255,255,255,0.22)";
+const DOT_DONE  = "rgba(255,255,255,0.92)";
+const DOT_FUT   = "rgba(255,255,255,0.14)";
+const ACCENT    = "#ff6a2a";
+const LABEL     = "rgba(255,255,255,0.45)";
+
+/* ===== 유틸 ===== */
+function parseDate(s){
+  const [y,m,d]=s.split("-").map(Number);
+  return new Date(y,m-1,d);
+}
+function startOfDay(d){
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+function daysBetween(a,b){
+  const A = startOfDay(a), B = startOfDay(b);
+  return Math.floor((B-A)/86400000);
+}
+function sameDay(a,b){
+  return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+}
+function clamp(n,a,b){ return Math.max(a, Math.min(b,n)); }
+
+function clear(){
+  ctx.fillStyle = BG;
+  ctx.fillRect(0,0,W,H);
+}
+function drawLineFullWidth(y, w, color){
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = w;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(COL_X, y);
+  ctx.lineTo(COL_X + COL_W, y);
+  ctx.stroke();
+  ctx.restore();
+}
+function drawYearText(year, y){
+  ctx.save();
+  ctx.fillStyle="rgba(255,255,255,0.92)";
+  ctx.textAlign="center";
+  ctx.font="700 80px Georgia, 'Times New Roman', serif";
+  ctx.fillText(String(year), W/2, y);
+  ctx.restore();
+}
+function drawFooter(leftDays, pct){
+  const y = H - Math.round(SAFE_BOT*0.55);
+
+  ctx.save();
+  ctx.textAlign="center";
+  ctx.font="600 32px system-ui,-apple-system,Segoe UI,Roboto,sans-serif";
+
+  const leftText = `${leftDays}d left`;
+  const pctText  = `${pct}%`;
+  const midDot = " · ";
+
+  const wLeft = ctx.measureText(leftText).width;
+  const wDot  = ctx.measureText(midDot).width;
+  const wPct  = ctx.measureText(pctText).width;
+  const total = wLeft + wDot + wPct;
+  const x0 = W/2 - total/2;
+
+  ctx.fillStyle = ACCENT;
+  ctx.fillText(leftText, x0 + wLeft/2, y);
+
+  ctx.fillStyle = "rgba(255,255,255,0.45)";
+  ctx.fillText(midDot, x0 + wLeft + wDot/2, y);
+
+  ctx.fillStyle = "rgba(255,255,255,0.45)";
+  ctx.fillText(pctText, x0 + wLeft + wDot + wPct/2, y);
+
+  ctx.restore();
+}
+
+/* ===== 연도바 ===== */
+function drawPastLinesTop(rangeStartYear, rangeEndYear, calendarYear){
+  const lineH = 6;
+  const gap = 18;
+
+  let y = SAFE_TOP + 40 + SHIFT_Y;
+  for(let yr=rangeStartYear; yr<=rangeEndYear; yr++){
+    if(yr < calendarYear){
+      drawLineFullWidth(y, lineH, LINE_PAST);
+      y += gap;
+    }
+  }
+  return y;
+}
+function drawFutureLinesBottom(rangeStartYear, rangeEndYear, calendarYear, anchorY){
+  const lineH = 6;
+  const gap = 18;
+
+  let y = anchorY;
+  for(let yr=rangeStartYear; yr<=rangeEndYear; yr++){
+    if(yr > calendarYear){
+      drawLineFullWidth(y, lineH, LINE_FUT);
+      y += gap;
+    }
+  }
+  return y;
+}
+
+/* ===== 달력 (공란 완전 공란) ===== */
+function drawMonthsGrid(calendarYear, start, goal, today, topY){
+  const cols=3, rows=4;
+  const gridX = COL_X;
+  const gridW = COL_W;
+
+  const gapX = 54;
+  const gapY = 58;
+
+  const cellW = Math.floor((gridW - gapX*(cols-1))/cols);
+  const cellH = 250;
+
+  const names=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  const dotCols=7, dotRows=6;
+  const innerPad=6;
+  const dotGap=10;
+  const dotsW = cellW - innerPad*2;
+  const dotSize = Math.floor((dotsW - dotGap*(dotCols-1))/dotCols);
+  const r = dotSize/2;
+
+  ctx.save();
+  for(let m=0;m<12;m++){
+    const cx=m%cols;
+    const cy=Math.floor(m/cols);
+
+    const x = gridX + cx*(cellW+gapX);
+    const y = topY + cy*(cellH+gapY);
+
+    ctx.fillStyle = LABEL;
+    ctx.font = "600 22px system-ui,-apple-system,Segoe UI,Roboto,sans-serif";
+    ctx.textAlign="left";
+    ctx.fillText(names[m], x, y);
+
+    const dotsX = x + innerPad;
+    const dotsY = y + 30;
+
+    const daysInMonth = new Date(calendarYear, m+1, 0).getDate();
+    const firstDay = new Date(calendarYear, m, 1).getDay();
+
+    for(let i=0;i<dotCols*dotRows;i++){
+      const dayNum = i - firstDay + 1;
+      if(dayNum < 1 || dayNum > daysInMonth) continue; // 월에 없는 칸 공란
+
+      const d = new Date(calendarYear, m, dayNum);
+
+      // 프로젝트 범위 밖 공란
+      if(d < start || d > goal) continue;
+
+      const dx=i%dotCols;
+      const dy=Math.floor(i/dotCols);
+      const px = dotsX + dx*(dotSize+dotGap) + r;
+      const py = dotsY + dy*(dotSize+dotGap) + r;
+
+      let fill = DOT_FUT;
+      if(d < today) fill = DOT_DONE;
+      if(sameDay(d, today)) fill = ACCENT;
+
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+
+  return topY + (rows*cellH + (rows-1)*gapY);
+}
+
+/* ===== 디버그: 렌더가 "실행"되면 무조건 보이는 표식 ===== */
+function drawDebugStamp(){
+  ctx.save();
+  ctx.fillStyle = "rgba(255,255,255,0.20)";
+  ctx.fillRect(12, 12, 140, 44);
+  ctx.fillStyle = "rgba(255,255,255,0.80)";
+  ctx.font = "600 20px system-ui,-apple-system,Segoe UI,Roboto,sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText("render OK", 22, 40);
+  ctx.restore();
+}
+
+/* ===== 메인 렌더 ===== */
+function render(){
+  clear();
+  drawDebugStamp(); // ✅ 이게 안 보이면 JS가 아예 안 도는 것
+
+  const start = parseDate(START);
+  const goal  = parseDate(GOAL);
+  const today = new Date();
+
+  const totalDays = Math.max(1, daysBetween(start, goal));
+  const doneDays  = clamp(daysBetween(start, today), 0, totalDays);
+  const pct = Math.floor((doneDays/totalDays)*100);
+  const leftDays = Math.max(0, daysBetween(today, goal));
+
+  const rangeStartYear = start.getFullYear(); // 2021부터
+  const rangeEndYear   = goal.getFullYear();  // 2031까지
+
+  let calendarYear = today.getFullYear();
+  if(calendarYear < rangeStartYear) calendarYear = rangeStartYear;
+  if(calendarYear > rangeEndYear)   calendarYear = rangeEndYear;
+
+  const pastEndY = drawPastLinesTop(rangeStartYear, rangeEndYear, calendarYear);
+
+  const yearY = pastEndY + 120;
+  drawYearText(calendarYear, yearY);
+
+  const monthsTop = yearY + 80;
+  const monthsEnd = drawMonthsGrid(calendarYear, start, goal, today, monthsTop);
+
+  const footerY = H - Math.round(SAFE_BOT*0.55);
+  const maxBarsBottom = footerY - 80;
+  const futureTop = Math.min(monthsEnd + 50, maxBarsBottom - 30);
+  drawFutureLinesBottom(rangeStartYear, rangeEndYear, calendarYear, futureTop);
+
+  drawFooter(leftDays, pct);
+}
+
+/* ===== 안전 실행: 에러나면 캔버스에 메시지 표시 ===== */
+try{
+  render();
+}catch(e){
+  clear();
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.font = "600 26px system-ui,-apple-system,Segoe UI,Roboto,sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText("JS error:", 40, 80);
+  ctx.font = "500 20px system-ui,-apple-system,Segoe UI,Roboto,sans-serif";
+  ctx.fillText(String(e), 40, 115);
+  console.error(e);
+}
+</script>
+</body>
+</html>
+
